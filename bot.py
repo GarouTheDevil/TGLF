@@ -16,11 +16,11 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 USER_SESSION = os.getenv("USER_SESSION")
 
-# Load channel mappings from the JSON file
+
 with open("chat_list.json", "r") as json_file:
     CHANNEL_MAPPING = json.load(json_file)
 
-# Initialize the Client with user session or bot token
+
 if USER_SESSION:
     app = Client(
         "my_user_bot",
@@ -38,25 +38,25 @@ else:
     )
     logger.info("Bot started using Bot Token")
 
-def extract_links(message_text):
-    # Use regular expressions to find links and magnet links in the message
-    link_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
-    magnet_pattern = r'magnet:\?xt=urn:btih:[a-fA-F0-9]+&.*'
-    
+def extract_links_and_media(message):
     links = []
+    media = None
     
-    # Find all links and magnet links in the message
-    matches_link = re.findall(link_pattern, message_text)
-    matches_magnet = re.findall(magnet_pattern, message_text)
+    if message.text:
+        links.extend(extract_links(message.text))
     
-    links.extend(matches_link)
-    links.extend(matches_magnet)
+    if message.media:
+        media = message.media
     
-    return links
+    return links, media
+
+def is_supported_photo_format(file_name):
+    supported_formats = ['.jpg', '.jpeg', '.png', '.gif']
+    return any(file_name.lower().endswith(format) for format in supported_formats)
 
 @app.on_message(filters.channel)
 async def forward(client, message):
-    # Forwarding the messages to the channels
+    
     try:
         for mapping in CHANNEL_MAPPING:
             source_channel = mapping["source"]
@@ -66,7 +66,7 @@ async def forward(client, message):
 
             if message.chat.id == int(source_channel):
                 source_message = await client.get_messages(int(source_channel), message.id)
-                extracted_links = extract_links(source_message.text)
+                extracted_links, media = extract_links_and_media(source_message)
 
                 if extracted_links:
                     for link in extracted_links:
@@ -79,10 +79,31 @@ async def forward(client, message):
                         logger.info("Forwarded a modified message from %s to %s",
                                     source_channel, destinations)
                         
-                        # Add a delay before sending the next link
+                        
                         await asyncio.sleep(1)
+                
+                
+                if media:
+                    if media.photo:
+                        for destination in destinations:
+                            await client.send_photo(chat_id=int(destination), photo=media.photo.file_id, caption=source_message.caption)
+                            await asyncio.sleep(5)
+
+                        logger.info("Forwarded a photo from %s to %s",
+                                    source_channel, destinations)
+                    
+                    
+                    elif media.document and is_supported_photo_format(media.document.file_name):
+                        for destination in destinations:
+                            await client.send_document(chat_id=int(destination), document=media.document.file_id, caption=source_message.caption)
+                            await asyncio.sleep(5)
+
+                        logger.info("Forwarded a document (photo) from %s to %s",
+                                    source_channel, destinations)
+
     except Exception as e:
         logger.exception(e)
 
 if __name__ == "__main__":
     app.run()
+    
